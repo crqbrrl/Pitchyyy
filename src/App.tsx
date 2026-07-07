@@ -114,19 +114,24 @@ export default function App() {
     setIsExtracting(true);
     setError(null);
 
-    try {
-      const reader = new FileReader();
-      reader.onload = async () => {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
         const base64 = (reader.result as string).split(",")[1];
         const extractedPitch = await extractPitchFromImage(base64, file.type);
         setPitch(extractedPitch);
+      } catch (err) {
+        setError("Failed to extract pitch from image. Please try typing it.");
+      } finally {
         setIsExtracting(false);
-      };
-      reader.readAsDataURL(file);
-    } catch (err) {
-      setError("Failed to extract pitch from image. Please try typing it.");
+      }
+    };
+    reader.onerror = () => {
+      setError("Failed to read the image file. Please try again.");
       setIsExtracting(false);
-    }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
   };
 
   return (
