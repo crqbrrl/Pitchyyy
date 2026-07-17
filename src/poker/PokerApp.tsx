@@ -1,30 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import {
-  Club,
-  Coins,
-  Crown,
-  Eye,
-  Hand,
-  Minus,
-  Plus,
-  RotateCcw,
-  Trophy,
-  Users,
-  X,
-} from "lucide-react";
+import { ArrowLeft, Club, Crown, Eye, Minus, Plus, RotateCcw, Trophy, Users, X } from "lucide-react";
 import { cn } from "../lib/utils";
-import { Card as CardType, SUIT_SYMBOLS, SUIT_IS_RED, rankLabel } from "./types";
-import {
-  Action,
-  GameState,
-  applyAction,
-  createGame,
-  legalActions,
-  potTotal,
-  startHand,
-} from "./engine";
-import { evaluateBest } from "./handEval";
+import { Action, GameState, applyAction, createGame, startHand } from "./engine.ts";
+import { evaluateBest } from "./handEval.ts";
+import { ActionControls, Board, CardBack, PlayingCard, PlayersOverview, TableHeader } from "./ui.tsx";
 
 type Screen = "setup" | "handoff" | "acting" | "results" | "gameover";
 
@@ -47,146 +27,18 @@ function loadSave(): SaveData | null {
   }
 }
 
-/* ---------- Petits composants ---------- */
-
-function PlayingCard({ card, size = "md" }: { card: CardType; size?: "sm" | "md" | "lg" }) {
-  const sizes = {
-    sm: "w-9 h-13 text-sm rounded-md",
-    md: "w-12 h-17 text-lg rounded-lg",
-    lg: "w-16 h-23 text-2xl rounded-xl",
-  };
-  return (
-    <div
-      className={cn(
-        "bg-white shadow-md flex flex-col items-center justify-center font-bold border border-zinc-200 shrink-0",
-        sizes[size],
-        SUIT_IS_RED[card.suit] ? "text-red-600" : "text-zinc-900",
-      )}
-    >
-      <span className="leading-none">{rankLabel(card.rank)}</span>
-      <span className="leading-none">{SUIT_SYMBOLS[card.suit]}</span>
-    </div>
-  );
-}
-
-function CardBack({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
-  const sizes = {
-    sm: "w-9 h-13 rounded-md",
-    md: "w-12 h-17 rounded-lg",
-    lg: "w-16 h-23 rounded-xl",
-  };
-  return (
-    <div
-      className={cn(
-        "shrink-0 border border-emerald-950/40 shadow-md bg-emerald-700",
-        "bg-[repeating-linear-gradient(45deg,rgba(255,255,255,0.12)_0_4px,transparent_4px_8px)]",
-        sizes[size],
-      )}
-    />
-  );
-}
-
-function EmptySlot({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
-  const sizes = {
-    sm: "w-9 h-13 rounded-md",
-    md: "w-12 h-17 rounded-lg",
-    lg: "w-16 h-23 rounded-xl",
-  };
-  return <div className={cn("border-2 border-dashed border-white/15 shrink-0", sizes[size])} />;
-}
-
-function Board({ game, cardSize = "md" }: { game: GameState; cardSize?: "sm" | "md" | "lg" }) {
-  return (
-    <div className="flex gap-1.5 justify-center">
-      {game.board.map((c, i) => (
-        <PlayingCard key={i} card={c} size={cardSize} />
-      ))}
-      {Array.from({ length: 5 - game.board.length }).map((_, i) => (
-        <EmptySlot key={`e${i}`} size={cardSize} />
-      ))}
-    </div>
-  );
-}
-
-function PlayersOverview({ game, revealHoles = false }: { game: GameState; revealHoles?: boolean }) {
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-      {game.players
-        .filter((p) => !p.out || p.hole.length > 0)
-        .map((p) => {
-          const isTurn = game.toAct !== null && game.players[game.toAct].id === p.id;
-          return (
-            <div
-              key={p.id}
-              className={cn(
-                "flex items-center justify-between px-3 py-2 rounded-xl border text-sm",
-                p.out || p.folded
-                  ? "bg-white/5 border-white/5 text-white/40"
-                  : isTurn
-                    ? "bg-amber-400/15 border-amber-400/50 text-white"
-                    : "bg-white/10 border-white/10 text-white",
-              )}
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                {p.id === game.dealer && (
-                  <span className="w-5 h-5 rounded-full bg-white text-emerald-900 text-[10px] font-bold flex items-center justify-center shrink-0">
-                    D
-                  </span>
-                )}
-                <span className="font-semibold truncate">{p.name}</span>
-                {p.folded && !p.out && <span className="text-[10px] uppercase tracking-wider shrink-0">couché</span>}
-                {p.out && <span className="text-[10px] uppercase tracking-wider shrink-0">éliminé</span>}
-                {p.allIn && !p.folded && (
-                  <span className="text-[10px] uppercase tracking-wider text-amber-300 shrink-0">tapis</span>
-                )}
-              </div>
-              <div className="flex items-center gap-3 shrink-0">
-                {revealHoles && !p.folded && !p.out && p.hole.length === 2 && (
-                  <span className="flex gap-0.5">
-                    <PlayingCard card={p.hole[0]} size="sm" />
-                    <PlayingCard card={p.hole[1]} size="sm" />
-                  </span>
-                )}
-                {p.bet > 0 && <span className="text-amber-300 font-semibold">{p.bet}</span>}
-                <span className="font-bold tabular-nums">{p.chips}</span>
-              </div>
-            </div>
-          );
-        })}
-    </div>
-  );
-}
-
-function TableHeader({ game }: { game: GameState }) {
-  return (
-    <div className="text-center space-y-3">
-      <div className="flex items-center justify-center gap-3 text-white/60 text-xs uppercase tracking-widest">
-        <span>Main n°{game.handNumber}</span>
-        <span>•</span>
-        <span>
-          Blindes {game.smallBlind}/{game.bigBlind}
-        </span>
-      </div>
-      <Board game={game} />
-      <div className="inline-flex items-center gap-2 bg-black/30 text-amber-300 font-bold px-4 py-1.5 rounded-full">
-        <Coins className="w-4 h-4" />
-        Pot : {potTotal(game)}
-      </div>
-      {game.lastAction && <p className="text-white/70 text-sm italic">{game.lastAction}</p>}
-    </div>
-  );
-}
-
 /* ---------- Écran de configuration ---------- */
 
 function SetupScreen({
   onStart,
   save,
   onResume,
+  onExit,
 }: {
   onStart: (names: string[], chips: number, sb: number, bb: number) => void;
   save: SaveData | null;
   onResume: () => void;
+  onExit: () => void;
 }) {
   const [names, setNames] = useState(["Joueur 1", "Joueur 2", "Joueur 3", "Joueur 4"]);
   const [chips, setChips] = useState(1000);
@@ -201,15 +53,14 @@ function SetupScreen({
     chips >= bigBlind * 2;
 
   return (
-    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-md mx-auto px-4 py-10 space-y-8">
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-md mx-auto px-4 py-8 space-y-6">
+      <button onClick={onExit} className="text-white/60 hover:text-white flex items-center gap-1.5 text-sm font-semibold">
+        <ArrowLeft className="w-4 h-4" />
+        Retour
+      </button>
       <div className="text-center space-y-2">
-        <div className="w-14 h-14 mx-auto bg-white rounded-2xl flex items-center justify-center shadow-lg">
-          <Club className="w-8 h-8 text-emerald-800" />
-        </div>
-        <h1 className="text-3xl font-display font-bold text-white">Poker entre potes</h1>
-        <p className="text-white/60">
-          Texas Hold&apos;em sur un seul appareil. On se passe le téléphone à chaque tour.
-        </p>
+        <h1 className="text-3xl font-display font-bold text-white">Un seul téléphone</h1>
+        <p className="text-white/60">On se passe l&apos;appareil à chaque tour de parole.</p>
       </div>
 
       {save && (
@@ -320,12 +171,7 @@ function SetupScreen({
 function HandoffScreen({ game, onReveal }: { game: GameState; onReveal: () => void }) {
   const player = game.players[game.toAct!];
   return (
-    <motion.div
-      key={`handoff-${game.toAct}-${game.street}`}
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="max-w-md mx-auto px-4 py-8 space-y-6"
-    >
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-md mx-auto px-4 py-8 space-y-6">
       <TableHeader game={game} />
       <div className="bg-white/5 border border-white/10 rounded-3xl p-8 text-center space-y-5">
         <p className="text-white/60 uppercase tracking-widest text-xs font-bold">Passe l&apos;appareil à</p>
@@ -351,17 +197,11 @@ function HandoffScreen({ game, onReveal }: { game: GameState; onReveal: () => vo
 
 function ActingScreen({ game, onAction }: { game: GameState; onAction: (a: Action) => void }) {
   const player = game.players[game.toAct!];
-  const legal = legalActions(game)!;
-  const [raiseTo, setRaiseTo] = useState(legal.minRaiseTo);
 
-  const pot = potTotal(game);
   const handHint = useMemo(() => {
     if (game.board.length < 3) return null;
     return evaluateBest([...player.hole, ...game.board]).name;
   }, [game.board, player.hole]);
-
-  const clampRaise = (v: number) => Math.max(legal.minRaiseTo, Math.min(legal.maxRaiseTo, v));
-  const isAllInRaise = raiseTo === legal.maxRaiseTo;
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-md mx-auto px-4 py-8 space-y-6">
@@ -392,81 +232,7 @@ function ActingScreen({ game, onAction }: { game: GameState; onAction: (a: Actio
           </p>
         )}
 
-        <div className="grid grid-cols-2 gap-3">
-          <button
-            onClick={() => onAction({ type: "fold" })}
-            className="py-4 bg-red-500/15 border border-red-400/30 text-red-300 rounded-2xl font-bold hover:bg-red-500/25 transition-all active:scale-[0.98]"
-          >
-            Se coucher
-          </button>
-          {legal.canCheck ? (
-            <button
-              onClick={() => onAction({ type: "check" })}
-              className="py-4 bg-white/10 border border-white/15 text-white rounded-2xl font-bold hover:bg-white/20 transition-all active:scale-[0.98]"
-            >
-              Parole
-            </button>
-          ) : (
-            <button
-              onClick={() => onAction({ type: "call" })}
-              className="py-4 bg-white/10 border border-white/15 text-white rounded-2xl font-bold hover:bg-white/20 transition-all active:scale-[0.98]"
-            >
-              Suivre {legal.callAmount}
-              {legal.callAmount >= player.chips && (
-                <span className="block text-[10px] uppercase tracking-wider text-amber-300">tapis</span>
-              )}
-            </button>
-          )}
-        </div>
-
-        {legal.canRaise && (
-          <div className="space-y-3 pt-1 border-t border-white/10">
-            <div className="flex items-center justify-between pt-3">
-              <span className="text-white/60 text-sm font-semibold">
-                {legal.isOpeningBet ? "Miser" : "Relancer à"}
-              </span>
-              <span className="text-white font-bold text-xl tabular-nums">{raiseTo}</span>
-            </div>
-            {legal.maxRaiseTo > legal.minRaiseTo && (
-              <input
-                type="range"
-                min={legal.minRaiseTo}
-                max={legal.maxRaiseTo}
-                step={1}
-                value={raiseTo}
-                onChange={(e) => setRaiseTo(Number(e.target.value))}
-                className="w-full accent-amber-400"
-              />
-            )}
-            <div className="flex gap-2">
-              <button
-                onClick={() => setRaiseTo(legal.minRaiseTo)}
-                className="flex-1 py-2 bg-white/10 text-white/80 rounded-lg text-sm font-semibold hover:bg-white/20"
-              >
-                Min
-              </button>
-              <button
-                onClick={() => setRaiseTo(clampRaise(game.currentBet + pot))}
-                className="flex-1 py-2 bg-white/10 text-white/80 rounded-lg text-sm font-semibold hover:bg-white/20"
-              >
-                Pot
-              </button>
-              <button
-                onClick={() => setRaiseTo(legal.maxRaiseTo)}
-                className="flex-1 py-2 bg-white/10 text-white/80 rounded-lg text-sm font-semibold hover:bg-white/20"
-              >
-                Tapis
-              </button>
-            </div>
-            <button
-              onClick={() => onAction({ type: "raise", amount: raiseTo })}
-              className="w-full py-4 bg-amber-400 text-emerald-950 rounded-2xl font-bold text-lg hover:bg-amber-300 transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
-            >
-              <Hand className="w-5 h-5" />
-              {isAllInRaise ? `Tapis (${raiseTo})` : legal.isOpeningBet ? `Miser ${raiseTo}` : `Relancer à ${raiseTo}`}
-            </button>
-          </div>
-        )}
+        <ActionControls game={game} onAction={onAction} />
       </div>
 
       <PlayersOverview game={game} />
@@ -575,9 +341,9 @@ function GameOverScreen({ game, onNewGame }: { game: GameState; onNewGame: () =>
   );
 }
 
-/* ---------- Application ---------- */
+/* ---------- Mode local (pass & play) ---------- */
 
-export default function PokerApp() {
+export default function PokerApp({ onExit }: { onExit: () => void }) {
   const [game, setGame] = useState<GameState | null>(null);
   const [screen, setScreen] = useState<Screen>("setup");
   const [save, setSave] = useState<SaveData | null>(() => loadSave());
@@ -593,21 +359,6 @@ export default function PokerApp() {
   const afterEngine = (next: GameState) => {
     setGame(next);
     setScreen(next.results ? "results" : "handoff");
-  };
-
-  const handleStart = (names: string[], chips: number, sb: number, bb: number) => {
-    afterEngine(createGame(names, chips, sb, bb));
-  };
-
-  const handleResume = () => {
-    if (!save) return;
-    setGame(save.game);
-    setScreen(save.screen === "acting" ? "handoff" : save.screen);
-  };
-
-  const handleAction = (action: Action) => {
-    if (!game) return;
-    afterEngine(applyAction(game, action));
   };
 
   const handleNextHand = () => {
@@ -632,7 +383,7 @@ export default function PokerApp() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-emerald-950 via-emerald-900 to-emerald-950 pb-10">
+    <>
       {screen !== "setup" && game && (
         <header className="sticky top-0 z-50 bg-emerald-950/80 backdrop-blur-md border-b border-white/10">
           <div className="max-w-md mx-auto px-4 h-12 flex items-center justify-between">
@@ -652,16 +403,30 @@ export default function PokerApp() {
 
       <AnimatePresence mode="wait">
         {screen === "setup" && (
-          <SetupScreen key="setup" onStart={handleStart} save={save} onResume={handleResume} />
+          <SetupScreen
+            key="setup"
+            onStart={(names, chips, sb, bb) => afterEngine(createGame(names, chips, sb, bb))}
+            save={save}
+            onResume={() => {
+              if (!save) return;
+              setGame(save.game);
+              setScreen(save.screen === "acting" ? "handoff" : save.screen);
+            }}
+            onExit={onExit}
+          />
         )}
         {screen === "handoff" && game && game.toAct !== null && (
-          <HandoffScreen key={`handoff-${game.toAct}-${game.street}-${game.handNumber}`} game={game} onReveal={() => setScreen("acting")} />
+          <HandoffScreen
+            key={`handoff-${game.toAct}-${game.street}-${game.handNumber}`}
+            game={game}
+            onReveal={() => setScreen("acting")}
+          />
         )}
         {screen === "acting" && game && game.toAct !== null && (
           <ActingScreen
             key={`acting-${game.toAct}-${game.street}-${game.currentBet}-${game.handNumber}`}
             game={game}
-            onAction={handleAction}
+            onAction={(a) => afterEngine(applyAction(game, a))}
           />
         )}
         {screen === "results" && game && game.results && (
@@ -669,6 +434,6 @@ export default function PokerApp() {
         )}
         {screen === "gameover" && game && <GameOverScreen key="gameover" game={game} onNewGame={handleNewGame} />}
       </AnimatePresence>
-    </div>
+    </>
   );
 }
