@@ -1,20 +1,39 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# ♠️ Poker entre potes
 
-# Run and deploy your AI Studio app
+Appli de **Texas Hold'em No-Limit en local** : une seule machine (téléphone ou
+ordi), on se passe l'appareil entre joueurs à chaque tour de parole. Parfait
+pour jouer à 4 (2 à 8 joueurs supportés).
 
-This contains everything you need to run your app locally.
+## Lancer l'appli
 
-View your app in AI Studio: https://ai.studio/apps/8ce5b5da-f3f9-445f-88a6-b916215b5e70
+**Prérequis :** Node.js
 
-## Run Locally
+```bash
+npm install
+npm run dev
+```
 
-**Prerequisites:**  Node.js
+Puis ouvre http://localhost:3000 — et fais tourner le téléphone !
 
+## Fonctionnalités
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+- Texas Hold'em No-Limit complet : blindes, pré-flop / flop / turn / river, showdown
+- Mode « hot seat » : écran de transition entre chaque joueur pour que personne ne voie tes cartes
+- Tapis (all-in) et **pots annexes** gérés correctement
+- Évaluation automatique des mains (quinte flush → hauteur), partage des pots en cas d'égalité
+- Indication de ta main en cours à partir du flop
+- Bouton du donneur qui tourne, éliminations, écran de victoire
+- Partie sauvegardée automatiquement dans le navigateur : recharge la page et reprends où vous en étiez
+
+## Config de la partie
+
+Sur l'écran d'accueil : noms des joueurs, tapis de départ (1000 par défaut) et
+blindes (10/20 par défaut).
+
+## Notes techniques
+
+- React 19 + TypeScript + Vite + Tailwind CSS 4
+- Moteur de jeu pur (sans dépendance UI) dans `src/poker/engine.ts`,
+  évaluation des mains dans `src/poker/handEval.ts`
+- L'ancienne appli Pitchyyy (analyse de pitch VC) est conservée dans
+  `src/App.tsx` mais n'est plus branchée sur le point d'entrée
