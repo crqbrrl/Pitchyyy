@@ -7,9 +7,16 @@ import { loadSession } from "./online.ts";
 
 type Mode = "home" | "local" | "online";
 
+// code de table passé par un lien d'invitation (?code=XXXX)
+function inviteCodeFromUrl(): string | undefined {
+  const code = new URLSearchParams(window.location.search).get("code")?.trim().toUpperCase();
+  return code && /^[A-Z0-9]{4}$/.test(code) ? code : undefined;
+}
+
 export default function AppRoot() {
-  // si une table en ligne est en cours, on y retourne directement
-  const [mode, setMode] = useState<Mode>(() => (loadSession() ? "online" : "home"));
+  const [inviteCode] = useState<string | undefined>(() => inviteCodeFromUrl());
+  // table en ligne en cours ou lien d'invitation : direction le mode en ligne
+  const [mode, setMode] = useState<Mode>(() => (loadSession() || inviteCodeFromUrl() ? "online" : "home"));
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-emerald-950 via-emerald-900 to-emerald-950 pb-10">
@@ -53,7 +60,7 @@ export default function AppRoot() {
         </motion.div>
       )}
       {mode === "local" && <PokerApp onExit={() => setMode("home")} />}
-      {mode === "online" && <OnlineApp onExit={() => setMode("home")} />}
+      {mode === "online" && <OnlineApp onExit={() => setMode("home")} initialCode={inviteCode} />}
     </div>
   );
 }

@@ -16,7 +16,7 @@ export interface RoomState {
   code: string;
   version?: number; // croissante à chaque écriture — permet d'ignorer un sondage périmé
   phase: "lobby" | "playing" | "over";
-  config: { chips: number; sb: number; bb: number };
+  config: { chips: number; sb: number; bb: number; blindPeriod?: number; turnSeconds?: number };
   members: { id: number; name: string }[];
   game: GameState | null;
 }
@@ -80,8 +80,10 @@ export async function createRoom(
   chips: number,
   sb: number,
   bb: number,
+  blindPeriod: number,
+  turnSeconds: number,
 ): Promise<{ session: OnlineSession; state: RoomState }> {
-  const r = await post({ op: "create", name, chips, sb, bb });
+  const r = await post({ op: "create", name, chips, sb, bb, blindPeriod, turnSeconds });
   const session: OnlineSession = {
     code: r.code as string,
     playerId: r.playerId as number,
@@ -104,8 +106,14 @@ export async function joinRoom(code: string, name: string): Promise<{ session: O
   return { session, state: r.state as RoomState };
 }
 
-export async function fetchState(code: string): Promise<RoomState> {
+// renvoie aussi l'horloge serveur pour synchroniser le compte à rebours du timer
+export async function fetchState(code: string): Promise<{ state: RoomState; now: number }> {
   const r = await post({ op: "state", code });
+  return { state: r.state as RoomState, now: (r.now as number) ?? Date.now() };
+}
+
+export async function sendTimeout(session: OnlineSession): Promise<RoomState> {
+  const r = await post({ op: "timeout", code: session.code, token: session.token });
   return r.state as RoomState;
 }
 

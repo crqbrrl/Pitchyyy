@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { ArrowLeft, Copy, Crown, Loader2, Trophy, Users, Wifi } from "lucide-react";
+import { ArrowLeft, Check, Crown, Link2, Loader2, Timer, Trophy, Users, Wifi } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Card as CardType } from "./types.ts";
 import { Action } from "./engine.ts";
@@ -17,6 +17,7 @@ import {
   loadSession,
   nextHand,
   sendAction,
+  sendTimeout,
   startGame,
 } from "./online.ts";
 import { ActionControls, Board, CardBack, PlayingCard, PlayersOverview } from "./ui.tsx";
@@ -32,12 +33,16 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
 const inputCls =
   "w-full px-4 py-3 bg-white/10 border border-white/10 rounded-xl text-white placeholder-white/40 outline-none focus:border-amber-400/60";
 
-export default function OnlineApp({ onExit }: { onExit: () => void }) {
-  const [screen, setScreen] = useState<OnlineScreen>(() => (loadSession() ? "room" : "menu"));
+export default function OnlineApp({ onExit, initialCode }: { onExit: () => void; initialCode?: string }) {
+  const [screen, setScreen] = useState<OnlineScreen>(() =>
+    loadSession() ? "room" : initialCode ? "join" : "menu",
+  );
   const [session, setSession] = useState<OnlineSession | null>(() => loadSession());
   const [state, setState] = useState<RoomState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // décalage horloge serveur - horloge locale, pour le compte à rebours du timer
+  const clockOffset = useRef(0);
 
   // Applique un nouvel état en ignorant les réponses périmées (une requête de
   // sondage partie avant une action peut arriver après elle) et en conservant
@@ -57,7 +62,8 @@ export default function OnlineApp({ onExit }: { onExit: () => void }) {
     let stopped = false;
     const tick = async () => {
       try {
-        const s = await fetchState(session.code);
+        const { state: s, now } = await fetchState(session.code);
+        clockOffset.current = now - Date.now();
         if (!stopped) mergeState(s);
       } catch (e) {
         if (!stopped && e instanceof Error && e.message.includes("introuvable")) {
@@ -155,11 +161,11 @@ export default function OnlineApp({ onExit }: { onExit: () => void }) {
       {screen === "create" && (
         <CreateScreen
           busy={busy}
-          onSubmit={async (name, chips, sb, bb) => {
+          onSubmit={async (name, chips, sb, bb, blindPeriod, turnSeconds) => {
             setBusy(true);
             setError(null);
             try {
-              const r = await createRoom(name, chips, sb, bb);
+              const r = await createRoom(name, chips, sb, bb, blindPeriod, turnSeconds);
               setSession(r.session);
               setState(r.state);
               setScreen("room");
@@ -174,6 +180,7 @@ export default function OnlineApp({ onExit }: { onExit: () => void }) {
       {screen === "join" && (
         <JoinScreen
           busy={busy}
+          initialCode={initialCode}
           onSubmit={async (code, name) => {
             setBusy(true);
             setError(null);
@@ -191,7 +198,14 @@ export default function OnlineApp({ onExit }: { onExit: () => void }) {
         />
       )}
       {screen === "room" && session && (
-        <RoomScreen session={session} state={state} busy={busy} runOp={runOp} onLeave={leave} />
+        <RoomScreen
+          session={session}
+          state={state}
+          busy={busy}
+          runOp={runOp}
+          onLeave={leave}
+          clockOffset={clockOffset}
+        />
       )}
     </div>
   );
@@ -243,12 +257,14 @@ function CreateScreen({
   onSubmit,
 }: {
   busy: boolean;
-  onSubmit: (name: string, chips: number, sb: number, bb: number) => void;
+  onSubmit: (name: string, chips: number, sb: number, bb: number, blindPeriod: number, turnSeconds: number) => void;
 }) {
   const [name, setName] = useState("");
   const [chips, setChips] = useState(1000);
   const [sb, setSb] = useState(10);
   const [bb, setBb] = useState(20);
+  const [blindPeriod, setBlindPeriod] = useState(0);
+  const [turnSeconds, setTurnSeconds] = useState(0);
   const valid = name.trim().length > 0 && sb > 0 && bb >= sb && chips >= bb * 2;
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
@@ -271,8 +287,28 @@ function CreateScreen({
           <input type="number" value={bb} min={1} onChange={(e) => setBb(Number(e.target.value))} className={inputCls} />
         </label>
       </div>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="space-y-1">
+          <FieldLabel>Montée des blindes</FieldLabel>
+          <select value={blindPeriod} onChange={(e) => setBlindPeriod(Number(e.target.value))} className={inputCls}>
+            <option value={0}>Jamais</option>
+            <option value={5}>x2 toutes les 5 mains</option>
+            <option value={10}>x2 toutes les 10 mains</option>
+            <option value={20}>x2 toutes les 20 mains</option>
+          </select>
+        </label>
+        <label className="space-y-1">
+          <FieldLabel>Timer par tour</FieldLabel>
+          <select value={turnSeconds} onChange={(e) => setTurnSeconds(Number(e.target.value))} className={inputCls}>
+            <option value={0}>Sans timer</option>
+            <option value={30}>30 secondes</option>
+            <option value={60}>60 secondes</option>
+            <option value={90}>90 secondes</option>
+          </select>
+        </label>
+      </div>
       <button
-        onClick={() => onSubmit(name.trim(), chips, sb, bb)}
+        onClick={() => onSubmit(name.trim(), chips, sb, bb, blindPeriod, turnSeconds)}
         disabled={!valid || busy}
         className={cn(
           "w-full py-4 rounded-2xl font-bold text-lg transition-all shadow-lg flex items-center justify-center gap-2",
@@ -286,8 +322,16 @@ function CreateScreen({
   );
 }
 
-function JoinScreen({ busy, onSubmit }: { busy: boolean; onSubmit: (code: string, name: string) => void }) {
-  const [code, setCode] = useState("");
+function JoinScreen({
+  busy,
+  initialCode,
+  onSubmit,
+}: {
+  busy: boolean;
+  initialCode?: string;
+  onSubmit: (code: string, name: string) => void;
+}) {
+  const [code, setCode] = useState(initialCode ?? "");
   const [name, setName] = useState("");
   const valid = code.trim().length >= 4 && name.trim().length > 0;
   return (
@@ -329,19 +373,47 @@ function RoomScreen({
   busy,
   runOp,
   onLeave,
+  clockOffset,
 }: {
   session: OnlineSession;
   state: RoomState | null;
   busy: boolean;
   runOp: (op: () => Promise<RoomState>) => Promise<void>;
   onLeave: () => void;
+  clockOffset: React.MutableRefObject<number>;
 }) {
   const [myCards, setMyCards] = useState<{ handNumber: number; hole: CardType[] }>({ handNumber: 0, hole: [] });
+  const [copied, setCopied] = useState(false);
 
   const game = state?.game ?? null;
   const isHost = session.playerId === 0;
   const myTurn = game !== null && game.toAct !== null && game.players[game.toAct].id === session.playerId;
   const me = game?.players[session.playerId] ?? null;
+
+  // Compte à rebours du timer de tour ; quand il expire, n'importe quel client
+  // le signale au serveur (qui re-vérifie l'horloge lui-même et joue
+  // parole/couche pour le joueur trop lent)
+  const turnSeconds = state?.config.turnSeconds ?? 0;
+  const [remaining, setRemaining] = useState<number | null>(null);
+  const timeoutSentFor = useRef<number | null>(null);
+  useEffect(() => {
+    if (!game || turnSeconds <= 0 || !game.turnStartedAt || game.results || game.toAct === null) {
+      setRemaining(null);
+      return;
+    }
+    const started = game.turnStartedAt;
+    const compute = () => Math.ceil(turnSeconds - (Date.now() + clockOffset.current - started) / 1000);
+    setRemaining(compute());
+    const iv = setInterval(() => {
+      const r = compute();
+      setRemaining(r);
+      if (r <= -1 && timeoutSentFor.current !== started) {
+        timeoutSentFor.current = started;
+        sendTimeout(session).catch(() => {});
+      }
+    }, 500);
+    return () => clearInterval(iv);
+  }, [game, turnSeconds, session, clockOffset]);
 
   // Récupère mes cartes à chaque nouvelle main (dépendance primitive :
   // l'effet ne tourne qu'une fois par main, pas à chaque sondage), avec
@@ -393,16 +465,44 @@ function RoomScreen({
           <p className="text-white/60 uppercase tracking-widest text-xs font-bold">Code de la table</p>
           <div className="text-5xl font-display font-bold text-white tracking-[0.3em] pl-[0.3em]">{state.code}</div>
           <button
-            onClick={() => {
-              navigator.clipboard?.writeText(`${state.code}`).catch(() => {});
+            onClick={async () => {
+              const url = `${location.origin}${location.pathname}?code=${state.code}`;
+              if (navigator.share) {
+                try {
+                  await navigator.share({
+                    title: "Poker entre potes",
+                    text: `Rejoins ma table de poker ! Code : ${state.code}`,
+                    url,
+                  });
+                  return;
+                } catch {
+                  /* partage annulé : on retombe sur la copie */
+                }
+              }
+              try {
+                await navigator.clipboard.writeText(url);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              } catch {
+                /* presse-papier indisponible */
+              }
             }}
-            className="inline-flex items-center gap-2 text-sm font-semibold text-amber-300 hover:text-amber-200"
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber-400 text-emerald-950 rounded-xl text-sm font-bold hover:bg-amber-300 transition-all active:scale-[0.98]"
           >
-            <Copy className="w-4 h-4" /> Copier le code
+            {copied ? <Check className="w-4 h-4" /> : <Link2 className="w-4 h-4" />}
+            {copied ? "Lien copié !" : "Partager le lien d'invitation"}
           </button>
           <p className="text-white/50 text-sm">
-            Tes potes vont sur cette même adresse, choisissent « Rejoindre avec un code » et entrent <b>{state.code}</b>.
+            Le lien ouvre l&apos;appli avec le code <b>{state.code}</b> déjà rempli — tes potes n&apos;ont plus qu&apos;à
+            entrer leur pseudo.
           </p>
+          {((state.config.blindPeriod ?? 0) > 0 || (state.config.turnSeconds ?? 0) > 0) && (
+            <p className="text-white/40 text-xs">
+              {(state.config.blindPeriod ?? 0) > 0 && `Blindes x2 toutes les ${state.config.blindPeriod} mains`}
+              {(state.config.blindPeriod ?? 0) > 0 && (state.config.turnSeconds ?? 0) > 0 && " • "}
+              {(state.config.turnSeconds ?? 0) > 0 && `${state.config.turnSeconds} s par tour`}
+            </p>
+          )}
         </div>
 
         <div className="space-y-2">
@@ -587,16 +687,32 @@ function RoomScreen({
           {me?.folded ? (
             <p className="text-center text-white/50 text-sm py-2">Tu t&apos;es couché — la main continue sans toi.</p>
           ) : myTurn ? (
-            <ActionControls
-              key={`${game.handNumber}-${game.street}-${game.currentBet}-${game.toAct}`}
-              game={game}
-              disabled={busy}
-              onAction={(a: Action) => runOp(() => sendAction(session, a))}
-            />
+            <>
+              {remaining !== null && (
+                <p
+                  className={cn(
+                    "text-center text-sm font-bold flex items-center justify-center gap-1.5 rounded-xl py-1.5",
+                    remaining <= 10 ? "text-red-300 bg-red-500/10" : "text-white/70",
+                  )}
+                >
+                  <Timer className="w-4 h-4" />
+                  {Math.max(0, remaining)} s pour jouer
+                </p>
+              )}
+              <ActionControls
+                key={`${game.handNumber}-${game.street}-${game.currentBet}-${game.toAct}`}
+                game={game}
+                disabled={busy}
+                onAction={(a: Action) => runOp(() => sendAction(session, a))}
+              />
+            </>
           ) : (
             <p className="text-center text-white/60 text-sm py-2 flex items-center justify-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" />
               {game.toAct !== null ? `Au tour de ${game.players[game.toAct].name}…` : "…"}
+              {remaining !== null && (
+                <span className="text-white/40 tabular-nums">({Math.max(0, remaining)} s)</span>
+              )}
             </p>
           )}
         </div>

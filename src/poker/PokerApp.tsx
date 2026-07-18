@@ -35,7 +35,7 @@ function SetupScreen({
   onResume,
   onExit,
 }: {
-  onStart: (names: string[], chips: number, sb: number, bb: number) => void;
+  onStart: (names: string[], chips: number, sb: number, bb: number, blindPeriod: number) => void;
   save: SaveData | null;
   onResume: () => void;
   onExit: () => void;
@@ -44,6 +44,7 @@ function SetupScreen({
   const [chips, setChips] = useState(1000);
   const [smallBlind, setSmallBlind] = useState(10);
   const [bigBlind, setBigBlind] = useState(20);
+  const [blindPeriod, setBlindPeriod] = useState(0);
 
   const valid =
     names.length >= 2 &&
@@ -148,10 +149,23 @@ function SetupScreen({
             />
           </label>
         </div>
+        <label className="block space-y-1 pt-2">
+          <span className="text-xs text-white/60 font-semibold uppercase tracking-wider">Montée des blindes</span>
+          <select
+            value={blindPeriod}
+            onChange={(e) => setBlindPeriod(Number(e.target.value))}
+            className="w-full px-3 py-2.5 bg-white/10 border border-white/10 rounded-xl text-white outline-none focus:border-amber-400/60"
+          >
+            <option value={0}>Jamais</option>
+            <option value={5}>x2 toutes les 5 mains</option>
+            <option value={10}>x2 toutes les 10 mains</option>
+            <option value={20}>x2 toutes les 20 mains</option>
+          </select>
+        </label>
       </div>
 
       <button
-        onClick={() => onStart(names.map((n) => n.trim()), chips, smallBlind, bigBlind)}
+        onClick={() => onStart(names.map((n) => n.trim()), chips, smallBlind, bigBlind, blindPeriod)}
         disabled={!valid}
         className={cn(
           "w-full py-4 rounded-2xl font-bold text-lg transition-all shadow-lg",
@@ -405,7 +419,7 @@ export default function PokerApp({ onExit }: { onExit: () => void }) {
         {screen === "setup" && (
           <SetupScreen
             key="setup"
-            onStart={(names, chips, sb, bb) => afterEngine(createGame(names, chips, sb, bb))}
+            onStart={(names, chips, sb, bb, blindPeriod) => afterEngine(createGame(names, chips, sb, bb, blindPeriod))}
             save={save}
             onResume={() => {
               if (!save) return;
