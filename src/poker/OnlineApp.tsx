@@ -20,7 +20,8 @@ import {
   sendTimeout,
   startGame,
 } from "./online.ts";
-import { ActionControls, Board, CardBack, PlayingCard, PlayersOverview } from "./ui.tsx";
+import { ActionControls, CardBack, PlayingCard } from "./ui.tsx";
+import { PokerTable } from "./table.tsx";
 
 const POLL_MS = 2000;
 
@@ -576,45 +577,23 @@ function RoomScreen({
 
   return (
     <div className="space-y-6">
-      <div className="text-center space-y-3">
-        <div className="flex items-center justify-center gap-3 text-white/60 text-xs uppercase tracking-widest">
-          <span>Table {state.code}</span>
-          <span>•</span>
-          <span>Main n°{game.handNumber}</span>
-          <span>•</span>
-          <span>
-            Blindes {game.smallBlind}/{game.bigBlind}
-          </span>
-        </div>
-        <Board game={game} />
-        <div className="inline-flex items-center gap-2 bg-black/30 text-amber-300 font-bold px-4 py-1.5 rounded-full">
-          Pot : {game.players.reduce((a, p) => a + p.total, 0)}
-        </div>
-        {game.lastAction && <p className="text-white/70 text-sm italic">{game.lastAction}</p>}
+      <div className="flex items-center justify-center gap-3 text-white/60 text-xs uppercase tracking-widest">
+        <span>Table {state.code}</span>
+        <span>•</span>
+        <span>Main n°{game.handNumber}</span>
+        <span>•</span>
+        <span>
+          Blindes {game.smallBlind}/{game.bigBlind}
+        </span>
       </div>
+
+      {/* la table en live : tout le monde voit la même chose, chacun de son point de vue */}
+      <PokerTable game={game} viewpointId={session.playerId} myHole={me && !me.folded ? holeVisible : []} />
+
 
       {/* Résultats de la main */}
       {game.results ? (
         <div className="space-y-4">
-          {game.results.revealed.length > 0 && (
-            <div className="space-y-2">
-              {game.results.revealed.map((r) => (
-                <div key={r.id} className="flex items-center justify-between bg-white/5 border border-white/10 rounded-2xl px-4 py-3">
-                  <div className="min-w-0">
-                    <p className="font-bold text-white truncate">
-                      {game.players[r.id].name}
-                      {r.id === session.playerId && <span className="text-white/50"> (toi)</span>}
-                    </p>
-                    <p className="text-white/60 text-sm">{r.handName}</p>
-                  </div>
-                  <div className="flex gap-1 shrink-0">
-                    <PlayingCard card={r.hole[0]} size="sm" />
-                    <PlayingCard card={r.hole[1]} size="sm" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
           {game.results.pots.map((pot, i) => (
             <div key={i} className="bg-amber-400/10 border border-amber-400/30 rounded-2xl px-4 py-3 space-y-1">
               <div className="flex items-center justify-between">
@@ -717,8 +696,6 @@ function RoomScreen({
           )}
         </div>
       )}
-
-      <PlayersOverview game={game} highlightId={session.playerId} />
     </div>
   );
 }

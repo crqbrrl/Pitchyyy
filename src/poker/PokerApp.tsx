@@ -4,7 +4,20 @@ import { ArrowLeft, Club, Crown, Eye, Minus, Plus, RotateCcw, Trophy, Users, X }
 import { cn } from "../lib/utils";
 import { Action, GameState, applyAction, createGame, startHand } from "./engine.ts";
 import { evaluateBest } from "./handEval.ts";
-import { ActionControls, Board, CardBack, PlayingCard, PlayersOverview, TableHeader } from "./ui.tsx";
+import { ActionControls, CardBack, PlayingCard } from "./ui.tsx";
+import { PokerTable } from "./table.tsx";
+
+function HandInfoLine({ game }: { game: GameState }) {
+  return (
+    <div className="flex items-center justify-center gap-3 text-white/60 text-xs uppercase tracking-widest">
+      <span>Main n°{game.handNumber}</span>
+      <span>•</span>
+      <span>
+        Blindes {game.smallBlind}/{game.bigBlind}
+      </span>
+    </div>
+  );
+}
 
 type Screen = "setup" | "handoff" | "acting" | "results" | "gameover";
 
@@ -185,8 +198,9 @@ function SetupScreen({
 function HandoffScreen({ game, onReveal }: { game: GameState; onReveal: () => void }) {
   const player = game.players[game.toAct!];
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-md mx-auto px-4 py-8 space-y-6">
-      <TableHeader game={game} />
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-md mx-auto px-4 py-8 space-y-4">
+      <HandInfoLine game={game} />
+      <PokerTable game={game} viewpointId={player.id} hideAllHoles />
       <div className="bg-white/5 border border-white/10 rounded-3xl p-8 text-center space-y-5">
         <p className="text-white/60 uppercase tracking-widest text-xs font-bold">Passe l&apos;appareil à</p>
         <h2 className="text-4xl font-display font-bold text-white">{player.name}</h2>
@@ -202,7 +216,6 @@ function HandoffScreen({ game, onReveal }: { game: GameState; onReveal: () => vo
           Voir mes cartes
         </button>
       </div>
-      <PlayersOverview game={game} />
     </motion.div>
   );
 }
@@ -218,8 +231,9 @@ function ActingScreen({ game, onAction }: { game: GameState; onAction: (a: Actio
   }, [game.board, player.hole]);
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-md mx-auto px-4 py-8 space-y-6">
-      <TableHeader game={game} />
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-md mx-auto px-4 py-8 space-y-4">
+      <HandInfoLine game={game} />
+      <PokerTable game={game} viewpointId={player.id} myHole={player.hole} />
 
       <div className="bg-white/5 border border-white/10 rounded-3xl p-6 space-y-5">
         <div className="flex items-center justify-between">
@@ -248,8 +262,6 @@ function ActingScreen({ game, onAction }: { game: GameState; onAction: (a: Actio
 
         <ActionControls game={game} onAction={onAction} />
       </div>
-
-      <PlayersOverview game={game} />
     </motion.div>
   );
 }
@@ -262,28 +274,9 @@ function ResultsScreen({ game, onNext }: { game: GameState; onNext: () => void }
   const stillIn = game.players.filter((p) => p.chips > 0).length;
 
   return (
-    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-md mx-auto px-4 py-8 space-y-6">
-      <div className="text-center space-y-3">
-        <div className="text-white/60 text-xs uppercase tracking-widest">Fin de la main n°{game.handNumber}</div>
-        <Board game={game} />
-      </div>
-
-      {results.revealed.length > 0 && (
-        <div className="space-y-2">
-          {results.revealed.map((r) => (
-            <div key={r.id} className="flex items-center justify-between bg-white/5 border border-white/10 rounded-2xl px-4 py-3">
-              <div className="min-w-0">
-                <p className="font-bold text-white truncate">{nameOf(r.id)}</p>
-                <p className="text-white/60 text-sm">{r.handName}</p>
-              </div>
-              <div className="flex gap-1 shrink-0">
-                <PlayingCard card={r.hole[0]} size="sm" />
-                <PlayingCard card={r.hole[1]} size="sm" />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-md mx-auto px-4 py-8 space-y-4">
+      <div className="text-center text-white/60 text-xs uppercase tracking-widest">Fin de la main n°{game.handNumber}</div>
+      <PokerTable game={game} />
 
       <div className="space-y-2">
         {results.pots.map((pot, i) => (
@@ -319,8 +312,6 @@ function ResultsScreen({ game, onNext }: { game: GameState; onNext: () => void }
       >
         {stillIn < 2 ? "Voir le vainqueur" : "Main suivante"}
       </button>
-
-      <PlayersOverview game={game} />
     </motion.div>
   );
 }

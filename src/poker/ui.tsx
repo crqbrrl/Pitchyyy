@@ -4,8 +4,11 @@ import { cn } from "../lib/utils";
 import { Card as CardType, SUIT_SYMBOLS, SUIT_IS_RED, rankLabel } from "./types.ts";
 import { Action, GameState, legalActions, potTotal } from "./engine.ts";
 
-export function PlayingCard({ card, size = "md" }: { card: CardType; size?: "sm" | "md" | "lg" }) {
+export type CardSize = "xs" | "sm" | "md" | "lg";
+
+export function PlayingCard({ card, size = "md" }: { card: CardType; size?: CardSize }) {
   const sizes = {
+    xs: "w-6 h-9 text-[10px] rounded",
     sm: "w-9 h-13 text-sm rounded-md",
     md: "w-12 h-17 text-lg rounded-lg",
     lg: "w-16 h-23 text-2xl rounded-xl",
@@ -24,8 +27,9 @@ export function PlayingCard({ card, size = "md" }: { card: CardType; size?: "sm"
   );
 }
 
-export function CardBack({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
+export function CardBack({ size = "md" }: { size?: CardSize }) {
   const sizes = {
+    xs: "w-6 h-9 rounded",
     sm: "w-9 h-13 rounded-md",
     md: "w-12 h-17 rounded-lg",
     lg: "w-16 h-23 rounded-xl",
@@ -41,8 +45,9 @@ export function CardBack({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
   );
 }
 
-export function EmptySlot({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
+export function EmptySlot({ size = "md" }: { size?: CardSize }) {
   const sizes = {
+    xs: "w-6 h-9 rounded",
     sm: "w-9 h-13 rounded-md",
     md: "w-12 h-17 rounded-lg",
     lg: "w-16 h-23 rounded-xl",
