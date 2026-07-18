@@ -171,7 +171,11 @@ async function handleJoin(body: Record<string, unknown>) {
   if (secret.phase !== "lobby") throw new ApiError("La partie a déjà commencé", 403);
   if (secret.members.length >= 8) throw new ApiError("Salle pleine (8 joueurs max)", 403);
   let name = cleanName(body.name);
-  while (secret.members.some((m) => m.name === name)) name = `${name.slice(0, 17)} 2`;
+  const baseName = name;
+  for (let n = 2; secret.members.some((m) => m.name === name); n++) {
+    const suffix = ` ${n}`;
+    name = baseName.slice(0, 20 - suffix.length) + suffix;
+  }
   const token = crypto.randomUUID();
   const member: Member = { id: secret.members.length, name, token };
   secret.members.push(member);
@@ -263,8 +267,16 @@ async function handleNextHand(body: Record<string, unknown>) {
 }
 
 async function handleState(body: Record<string, unknown>) {
-  const { room, secret } = await loadRoom(body.code);
-  return { state: publicState(room.code, secret) };
+  // chemin chaud (sondé toutes les 2 s par chaque joueur) : on lit directement
+  // l'état public déjà matérialisé, sans toucher aux secrets
+  if (typeof body.code !== "string" || !body.code.trim()) throw new ApiError("Code de salle manquant");
+  const { data } = await supabase
+    .from("rooms")
+    .select("state")
+    .eq("code", body.code.trim().toUpperCase())
+    .maybeSingle();
+  if (!data) throw new ApiError("Salle introuvable — vérifie le code", 404);
+  return { state: data.state };
 }
 
 Deno.serve(async (req: Request) => {

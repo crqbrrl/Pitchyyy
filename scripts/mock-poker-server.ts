@@ -106,7 +106,11 @@ const handlers: Record<string, (body: Record<string, unknown>) => unknown> = {
     if (secret.phase !== "lobby") throw new ApiError("La partie a déjà commencé", 403);
     if (secret.members.length >= 8) throw new ApiError("Salle pleine (8 joueurs max)", 403);
     let name = cleanName(body.name);
-    while (secret.members.some((m) => m.name === name)) name = `${name.slice(0, 17)} 2`;
+    const baseName = name;
+    for (let n = 2; secret.members.some((m) => m.name === name); n++) {
+      const suffix = ` ${n}`;
+      name = baseName.slice(0, 20 - suffix.length) + suffix;
+    }
     const token = crypto.randomUUID();
     const member: Member = { id: secret.members.length, name, token };
     secret.members.push(member);
