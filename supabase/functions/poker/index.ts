@@ -38,7 +38,7 @@ interface Member {
 interface Secret {
   phase: "lobby" | "playing" | "over";
   hostToken: string;
-  config: { chips: number; sb: number; bb: number };
+  config: { chips: number; sb: number; bb: number; blindPeriod?: number; turnSeconds?: number };
   members: Member[];
   game: GameState | null;
 }
@@ -132,13 +132,15 @@ async function handleCreate(body: Record<string, unknown>) {
   const chips = clampInt(body.chips, 20, 1_000_000, 1000);
   const sb = clampInt(body.sb, 1, Math.floor(chips / 2), 10);
   const bb = clampInt(body.bb, sb, Math.floor(chips / 2), Math.min(sb * 2, Math.floor(chips / 2)));
+  const blindPeriod = clampInt(body.blindPeriod, 0, 100, 0); // 0 = blindes fixes
+  const turnSeconds = clampInt(body.turnSeconds, 0, 300, 0); // 0 = pas de timer
   const token = crypto.randomUUID();
   const secret: Secret = {
     phase: "lobby",
     hostToken: token,
-    config: { chips, sb, bb },
+    config: { chips, sb, bb, blindPeriod, turnSeconds },
     members: [{ id: 0, name, token }],
-  game: null,
+    game: null,
   };
 
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -187,7 +189,9 @@ async function handleStart(body: Record<string, unknown>) {
     secret.config.chips,
     secret.config.sb,
     secret.config.bb,
+    secret.config.blindPeriod ?? 0,
   );
+  secret.game.turnStartedAt = Date.now();
   secret.phase = "playing";
   const state = await saveRoom(room, secret);
   return { state };
@@ -231,6 +235,33 @@ async function handleAct(body: Record<string, unknown>) {
   }
 
   secret.game = applyAction(game, action);
+  secret.game.turnStartedAt = secret.game.toAct !== null ? Date.now() : null;
+  const state = await saveRoom(room, secret);
+  return { state };
+}
+
+// N'importe quel joueur de la salle peut signaler que le temps du joueur au
+// tour est écoulé : le serveur vérifie l'horloge lui-même puis joue
+// parole si possible, sinon se couche. Idempotent grâce au verrou de version.
+async function handleTimeout(body: Record<string, unknown>) {
+  const { room, secret } = await loadRoom(body.code);
+  findMember(secret, body.token);
+  if (secret.phase !== "playing" || !secret.game) throw new ApiError("La partie n'est pas en cours", 400);
+  const game = secret.game;
+  const turnSeconds = secret.config.turnSeconds ?? 0;
+  if (turnSeconds <= 0) throw new ApiError("Pas de timer sur cette table", 400);
+  if (game.results || game.toAct === null || !game.turnStartedAt) {
+    return { state: publicState(room.code, secret, room.version) };
+  }
+  // 1 s de grâce pour absorber les décalages réseau
+  if (Date.now() - game.turnStartedAt < (turnSeconds + 1) * 1000) {
+    return { state: publicState(room.code, secret, room.version) };
+  }
+  const legal = legalActions(game)!;
+  const slowName = game.players[game.toAct].name;
+  secret.game = applyAction(game, legal.canCheck ? { type: "check" } : { type: "fold" });
+  secret.game.lastAction = `⏱ Temps écoulé — ${slowName} ${legal.canCheck ? ": parole" : "se couche"}`;
+  secret.game.turnStartedAt = secret.game.toAct !== null ? Date.now() : null;
   const state = await saveRoom(room, secret);
   return { state };
 }
@@ -254,6 +285,7 @@ async function handleNextHand(body: Record<string, unknown>) {
     secret.phase = "over";
   } else {
     secret.game = startHand(secret.game);
+    secret.game.turnStartedAt = secret.game.toAct !== null ? Date.now() : null;
   }
   const state = await saveRoom(room, secret);
   return { state };
@@ -299,13 +331,17 @@ Deno.serve(async (req: Request) => {
       case "next_hand":
         result = await handleNextHand(body);
         break;
+      case "timeout":
+        result = await handleTimeout(body);
+        break;
       case "state":
         result = await handleState(body);
         break;
       default:
         throw new ApiError("Opération inconnue");
     }
-    return new Response(JSON.stringify({ ok: true, ...(result as object) }), {
+    // `now` permet aux clients de synchroniser le compte à rebours du timer
+    return new Response(JSON.stringify({ ok: true, now: Date.now(), ...(result as object) }), {
       headers: { ...CORS, "Content-Type": "application/json" },
     });
   } catch (err) {

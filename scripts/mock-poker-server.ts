@@ -20,7 +20,7 @@ interface Member {
 interface Secret {
   phase: "lobby" | "playing" | "over";
   hostToken: string;
-  config: { chips: number; sb: number; bb: number };
+  config: { chips: number; sb: number; bb: number; blindPeriod?: number; turnSeconds?: number };
   members: Member[];
   game: GameState | null;
 }
@@ -92,12 +92,14 @@ const handlers: Record<string, (body: Record<string, unknown>) => unknown> = {
     const chips = clampInt(body.chips, 20, 1_000_000, 1000);
     const sb = clampInt(body.sb, 1, Math.floor(chips / 2), 10);
     const bb = clampInt(body.bb, sb, Math.floor(chips / 2), Math.min(sb * 2, Math.floor(chips / 2)));
+    const blindPeriod = clampInt(body.blindPeriod, 0, 100, 0);
+    const turnSeconds = clampInt(body.turnSeconds, 0, 300, 0);
     const token = crypto.randomUUID();
     const code = genCode();
     const secret: Secret = {
       phase: "lobby",
       hostToken: token,
-      config: { chips, sb, bb },
+      config: { chips, sb, bb, blindPeriod, turnSeconds },
       members: [{ id: 0, name, token }],
       game: null,
     };
@@ -132,7 +134,9 @@ const handlers: Record<string, (body: Record<string, unknown>) => unknown> = {
       secret.config.chips,
       secret.config.sb,
       secret.config.bb,
+      secret.config.blindPeriod ?? 0,
     );
+    secret.game.turnStartedAt = Date.now();
     secret.phase = "playing";
     bump(code);
     return { state: publicState(code, secret) };
@@ -173,6 +177,28 @@ const handlers: Record<string, (body: Record<string, unknown>) => unknown> = {
         throw new ApiError("Action inconnue");
     }
     secret.game = applyAction(game, action);
+    secret.game.turnStartedAt = secret.game.toAct !== null ? Date.now() : null;
+    bump(code);
+    return { state: publicState(code, secret) };
+  },
+  timeout(body) {
+    const { code, secret } = loadRoom(body.code);
+    findMember(secret, body.token);
+    if (secret.phase !== "playing" || !secret.game) throw new ApiError("La partie n'est pas en cours", 400);
+    const game = secret.game;
+    const turnSeconds = secret.config.turnSeconds ?? 0;
+    if (turnSeconds <= 0) throw new ApiError("Pas de timer sur cette table", 400);
+    if (game.results || game.toAct === null || !game.turnStartedAt) {
+      return { state: publicState(code, secret) };
+    }
+    if (Date.now() - game.turnStartedAt < (turnSeconds + 1) * 1000) {
+      return { state: publicState(code, secret) };
+    }
+    const legal = legalActions(game)!;
+    const slowName = game.players[game.toAct].name;
+    secret.game = applyAction(game, legal.canCheck ? { type: "check" } : { type: "fold" });
+    secret.game.lastAction = `⏱ Temps écoulé — ${slowName} ${legal.canCheck ? ": parole" : "se couche"}`;
+    secret.game.turnStartedAt = secret.game.toAct !== null ? Date.now() : null;
     bump(code);
     return { state: publicState(code, secret) };
   },
@@ -193,6 +219,7 @@ const handlers: Record<string, (body: Record<string, unknown>) => unknown> = {
       secret.phase = "over";
     } else {
       secret.game = startHand(secret.game);
+      secret.game.turnStartedAt = secret.game.toAct !== null ? Date.now() : null;
     }
     bump(code);
     return { state: publicState(code, secret) };
@@ -217,7 +244,7 @@ app.post("*", (req, res) => {
     const body = req.body as Record<string, unknown>;
     const handler = handlers[body?.op as string];
     if (!handler) throw new ApiError("Opération inconnue");
-    res.json({ ok: true, ...(handler(body) as object) });
+    res.json({ ok: true, now: Date.now(), ...(handler(body) as object) });
   } catch (err) {
     const status = err instanceof ApiError ? err.status : 500;
     res.status(status).json({ ok: false, error: err instanceof Error ? err.message : "Erreur interne" });

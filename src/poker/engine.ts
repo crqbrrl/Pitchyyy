@@ -48,6 +48,14 @@ export interface GameState {
   minRaise: number;
   smallBlind: number;
   bigBlind: number;
+  // montée automatique des blindes : doublement toutes les blindPeriod mains
+  // (0 ou absent = blindes fixes)
+  baseSmallBlind?: number;
+  baseBigBlind?: number;
+  blindPeriod?: number;
+  // horodatage serveur du début du tour en cours (mode en ligne, posé par
+  // l'API — le moteur ne le lit jamais)
+  turnStartedAt?: number | null;
   handNumber: number;
   results: HandResults | null;
   lastAction: string | null;
@@ -90,7 +98,13 @@ function pay(p: PlayerState, amount: number) {
   return paid;
 }
 
-export function createGame(names: string[], startChips: number, smallBlind: number, bigBlind: number): GameState {
+export function createGame(
+  names: string[],
+  startChips: number,
+  smallBlind: number,
+  bigBlind: number,
+  blindPeriod = 0,
+): GameState {
   const players: PlayerState[] = names.map((name, id) => ({
     id,
     name,
@@ -116,6 +130,9 @@ export function createGame(names: string[], startChips: number, smallBlind: numb
     minRaise: bigBlind,
     smallBlind,
     bigBlind,
+    baseSmallBlind: smallBlind,
+    baseBigBlind: bigBlind,
+    blindPeriod,
     handNumber: 0,
     results: null,
     lastAction: null,
@@ -141,6 +158,16 @@ export function startHand(prev: GameState): GameState {
   if (aliveCount < 2) return s;
 
   s.handNumber++;
+  // montée automatique des blindes : doublement à chaque palier
+  if (s.blindPeriod && s.baseSmallBlind != null && s.baseBigBlind != null) {
+    const level = Math.floor((s.handNumber - 1) / s.blindPeriod);
+    const mult = Math.pow(2, level);
+    s.smallBlind = s.baseSmallBlind * mult;
+    s.bigBlind = s.baseBigBlind * mult;
+    if (level > 0 && (s.handNumber - 1) % s.blindPeriod === 0) {
+      s.lastAction = `Les blindes montent à ${s.smallBlind}/${s.bigBlind}`;
+    }
+  }
   if (!(s.handNumber === 1 && isAlive(s.players[s.dealer]))) {
     s.dealer = nextIndex(s.players, s.dealer, isAlive);
   }
