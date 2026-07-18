@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "motion/react";
 import { ArrowLeft, Copy, Crown, Loader2, Trophy, Users, Wifi } from "lucide-react";
 import { cn } from "../lib/utils";
@@ -6,6 +6,7 @@ import { Card as CardType } from "./types.ts";
 import { Action } from "./engine.ts";
 import { evaluateBest } from "./handEval.ts";
 import {
+  ApiCallError,
   OnlineSession,
   RoomState,
   clearSession,
@@ -15,7 +16,6 @@ import {
   joinRoom,
   loadSession,
   nextHand,
-  saveSession,
   sendAction,
   startGame,
 } from "./online.ts";
@@ -39,6 +39,18 @@ export default function OnlineApp({ onExit }: { onExit: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Applique un nouvel état en ignorant les réponses périmées (une requête de
+  // sondage partie avant une action peut arriver après elle) et en conservant
+  // l'identité de l'objet si rien n'a changé (pas de re-render inutile)
+  const mergeState = useCallback((s: RoomState) => {
+    setState((prev) => {
+      if (prev && prev.version !== undefined && s.version !== undefined && s.version < prev.version) {
+        return prev;
+      }
+      return prev && JSON.stringify(prev) === JSON.stringify(s) ? prev : s;
+    });
+  }, []);
+
   // Sondage régulier de l'état de la salle (2 s) + rafraîchissement au retour d'onglet
   useEffect(() => {
     if (!session || screen !== "room") return;
@@ -46,7 +58,7 @@ export default function OnlineApp({ onExit }: { onExit: () => void }) {
     const tick = async () => {
       try {
         const s = await fetchState(session.code);
-        if (!stopped) setState(s);
+        if (!stopped) mergeState(s);
       } catch (e) {
         if (!stopped && e instanceof Error && e.message.includes("introuvable")) {
           clearSession();
@@ -67,19 +79,32 @@ export default function OnlineApp({ onExit }: { onExit: () => void }) {
       clearInterval(iv);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [session, screen]);
+  }, [session, screen, mergeState]);
 
-  const runOp = useCallback(async (op: () => Promise<RoomState>) => {
-    setBusy(true);
-    setError(null);
-    try {
-      setState(await op());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Erreur inconnue");
-    } finally {
-      setBusy(false);
-    }
-  }, []);
+  const runOp = useCallback(
+    async (op: () => Promise<RoomState>) => {
+      setBusy(true);
+      setError(null);
+      try {
+        try {
+          mergeState(await op());
+        } catch (e) {
+          // conflit d'écriture (deux actions simultanées) : on réessaie une fois
+          if (e instanceof ApiCallError && e.status === 409) {
+            await new Promise((r) => setTimeout(r, 400));
+            mergeState(await op());
+          } else {
+            throw e;
+          }
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Erreur inconnue");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [mergeState],
+  );
 
   const leave = () => {
     clearSession();
@@ -312,24 +337,45 @@ function RoomScreen({
   onLeave: () => void;
 }) {
   const [myCards, setMyCards] = useState<{ handNumber: number; hole: CardType[] }>({ handNumber: 0, hole: [] });
-  const fetchingCards = useRef(false);
 
   const game = state?.game ?? null;
   const isHost = session.playerId === 0;
   const myTurn = game !== null && game.toAct !== null && game.players[game.toAct].id === session.playerId;
   const me = game?.players[session.playerId] ?? null;
 
-  // Récupère mes cartes à chaque nouvelle main
+  // Récupère mes cartes à chaque nouvelle main (dépendance primitive :
+  // l'effet ne tourne qu'une fois par main, pas à chaque sondage), avec
+  // réessai en cas d'échec réseau ou de réponse encore sur l'ancienne main
+  const handNumber = game?.handNumber ?? 0;
   useEffect(() => {
-    if (!game || game.handNumber === 0 || myCards.handNumber === game.handNumber || fetchingCards.current) return;
-    fetchingCards.current = true;
-    fetchMyCards(session)
-      .then((r) => setMyCards(r))
-      .catch(() => {})
-      .finally(() => {
-        fetchingCards.current = false;
-      });
-  }, [game, game?.handNumber, myCards.handNumber, session]);
+    if (handNumber === 0) return;
+    let cancelled = false;
+    const attempt = (delay: number) => {
+      const later = () => {
+        if (!cancelled) setTimeout(() => attempt(Math.min(delay * 2, 8000)), delay);
+      };
+      fetchMyCards(session)
+        .then((r) => {
+          if (cancelled) return;
+          if (r.handNumber >= handNumber) setMyCards(r);
+          else later();
+        })
+        .catch(later);
+    };
+    attempt(800);
+    return () => {
+      cancelled = true;
+    };
+  }, [handNumber, session]);
+
+  const handHint = useMemo(() => {
+    if (!game || myCards.handNumber !== game.handNumber || myCards.hole.length !== 2 || game.board.length < 3) {
+      return null;
+    }
+    const p = game.players[session.playerId];
+    if (!p || p.folded) return null;
+    return evaluateBest([...myCards.hole, ...game.board]).name;
+  }, [game, myCards, session.playerId]);
 
   if (!state) {
     return (
@@ -427,10 +473,6 @@ function RoomScreen({
   if (!game) return null;
 
   const holeVisible = myCards.handNumber === game.handNumber ? myCards.hole : [];
-  const handHint =
-    holeVisible.length === 2 && game.board.length >= 3 && me && !me.folded
-      ? evaluateBest([...holeVisible, ...game.board]).name
-      : null;
 
   return (
     <div className="space-y-6">

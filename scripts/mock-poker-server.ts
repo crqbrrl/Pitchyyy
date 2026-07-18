@@ -34,6 +34,8 @@ class ApiError extends Error {
 }
 
 const rooms = new Map<string, Secret>();
+const versions = new Map<string, number>();
+const bump = (code: string) => versions.set(code, (versions.get(code) ?? 0) + 1);
 
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 function genCode(): string {
@@ -51,6 +53,7 @@ function publicState(code: string, secret: Secret) {
   }
   return {
     code,
+    version: versions.get(code) ?? 0,
     phase: secret.phase,
     config: secret.config,
     members: secret.members.map((m) => ({ id: m.id, name: m.name })),
@@ -99,6 +102,7 @@ const handlers: Record<string, (body: Record<string, unknown>) => unknown> = {
       game: null,
     };
     rooms.set(code, secret);
+    versions.set(code, 0);
     return { code, playerId: 0, token, state: publicState(code, secret) };
   },
   join(body) {
@@ -106,10 +110,15 @@ const handlers: Record<string, (body: Record<string, unknown>) => unknown> = {
     if (secret.phase !== "lobby") throw new ApiError("La partie a déjà commencé", 403);
     if (secret.members.length >= 8) throw new ApiError("Salle pleine (8 joueurs max)", 403);
     let name = cleanName(body.name);
-    while (secret.members.some((m) => m.name === name)) name = `${name.slice(0, 17)} 2`;
+    const baseName = name;
+    for (let n = 2; secret.members.some((m) => m.name === name); n++) {
+      const suffix = ` ${n}`;
+      name = baseName.slice(0, 20 - suffix.length) + suffix;
+    }
     const token = crypto.randomUUID();
     const member: Member = { id: secret.members.length, name, token };
     secret.members.push(member);
+    bump(code);
     return { code, playerId: member.id, token, state: publicState(code, secret) };
   },
   start(body) {
@@ -125,6 +134,7 @@ const handlers: Record<string, (body: Record<string, unknown>) => unknown> = {
       secret.config.bb,
     );
     secret.phase = "playing";
+    bump(code);
     return { state: publicState(code, secret) };
   },
   act(body) {
@@ -163,6 +173,7 @@ const handlers: Record<string, (body: Record<string, unknown>) => unknown> = {
         throw new ApiError("Action inconnue");
     }
     secret.game = applyAction(game, action);
+    bump(code);
     return { state: publicState(code, secret) };
   },
   my_cards(body) {
@@ -183,6 +194,7 @@ const handlers: Record<string, (body: Record<string, unknown>) => unknown> = {
     } else {
       secret.game = startHand(secret.game);
     }
+    bump(code);
     return { state: publicState(code, secret) };
   },
   state(body) {

@@ -60,7 +60,8 @@ function genCode(): string {
 
 // État visible par tous : sans le paquet ni les cartes privées.
 // (les mains révélées au showdown restent dans game.results.revealed)
-function publicState(code: string, secret: Secret) {
+// La version permet aux clients d'ignorer une réponse de sondage périmée.
+function publicState(code: string, secret: Secret, version: number) {
   let game: GameState | null = null;
   if (secret.game) {
     game = JSON.parse(JSON.stringify(secret.game)) as GameState;
@@ -71,6 +72,7 @@ function publicState(code: string, secret: Secret) {
   }
   return {
     code,
+    version,
     phase: secret.phase,
     config: secret.config,
     members: secret.members.map((m) => ({ id: m.id, name: m.name })),
@@ -83,35 +85,28 @@ async function loadRoom(code: unknown): Promise<{ room: RoomRow; secret: Secret 
   const normalized = code.trim().toUpperCase();
   const { data: room } = await supabase
     .from("rooms")
-    .select("id, code, version")
+    .select("id, code, version, room_secrets(secret)")
     .eq("code", normalized)
     .maybeSingle();
   if (!room) throw new ApiError("Salle introuvable — vérifie le code", 404);
-  const { data: sec } = await supabase
-    .from("room_secrets")
-    .select("secret")
-    .eq("room_id", room.id)
-    .maybeSingle();
-  if (!sec) throw new ApiError("Salle corrompue", 500);
-  return { room: room as RoomRow, secret: sec.secret as Secret };
+  const embedded = room.room_secrets as { secret: Secret } | { secret: Secret }[] | null;
+  const secretRow = Array.isArray(embedded) ? embedded[0] : embedded;
+  if (!secretRow) throw new ApiError("Salle corrompue", 500);
+  return { room: room as unknown as RoomRow, secret: secretRow.secret };
 }
 
 async function saveRoom(room: RoomRow, secret: Secret) {
-  const state = publicState(room.code, secret);
-  // verrou optimiste : si quelqu'un a écrit entre-temps, on rejette et le client réessaie
-  const { data, error } = await supabase
-    .from("rooms")
-    .update({ state, version: room.version + 1, updated_at: new Date().toISOString() })
-    .eq("id", room.id)
-    .eq("version", room.version)
-    .select("id");
+  const state = publicState(room.code, secret, room.version + 1);
+  // écriture atomique (état public + secret) avec verrou optimiste :
+  // si quelqu'un a écrit entre-temps, on rejette et le client réessaie
+  const { data: saved, error } = await supabase.rpc("save_room", {
+    p_room_id: room.id,
+    p_expected_version: room.version,
+    p_state: state,
+    p_secret: secret,
+  });
   if (error) throw new ApiError(error.message, 500);
-  if (!data || data.length === 0) throw new ApiError("Deux actions simultanées — réessaie", 409);
-  const { error: secErr } = await supabase
-    .from("room_secrets")
-    .update({ secret })
-    .eq("room_id", room.id);
-  if (secErr) throw new ApiError(secErr.message, 500);
+  if (!saved) throw new ApiError("Deux actions simultanées — réessaie", 409);
   return state;
 }
 
@@ -148,20 +143,18 @@ async function handleCreate(body: Record<string, unknown>) {
 
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = genCode();
-    const { data: inserted, error } = await supabase
-      .from("rooms")
-      .insert({ code, state: publicState(code, secret) })
-      .select("id")
-      .maybeSingle();
+    const state = publicState(code, secret, 0);
+    // insertion atomique rooms + room_secrets
+    const { error } = await supabase.rpc("create_room", {
+      p_code: code,
+      p_state: state,
+      p_secret: secret,
+    });
     if (error) {
       if (error.code === "23505") continue; // collision de code, on retente
       throw new ApiError(error.message, 500);
     }
-    const { error: secErr } = await supabase
-      .from("room_secrets")
-      .insert({ room_id: inserted!.id, secret });
-    if (secErr) throw new ApiError(secErr.message, 500);
-    return { code, playerId: 0, token, state: publicState(code, secret) };
+    return { code, playerId: 0, token, state };
   }
   throw new ApiError("Impossible de générer un code de salle", 500);
 }
@@ -171,7 +164,11 @@ async function handleJoin(body: Record<string, unknown>) {
   if (secret.phase !== "lobby") throw new ApiError("La partie a déjà commencé", 403);
   if (secret.members.length >= 8) throw new ApiError("Salle pleine (8 joueurs max)", 403);
   let name = cleanName(body.name);
-  while (secret.members.some((m) => m.name === name)) name = `${name.slice(0, 17)} 2`;
+  const baseName = name;
+  for (let n = 2; secret.members.some((m) => m.name === name); n++) {
+    const suffix = ` ${n}`;
+    name = baseName.slice(0, 20 - suffix.length) + suffix;
+  }
   const token = crypto.randomUUID();
   const member: Member = { id: secret.members.length, name, token };
   secret.members.push(member);
@@ -251,7 +248,7 @@ async function handleNextHand(body: Record<string, unknown>) {
   findMember(secret, body.token);
   if (secret.phase !== "playing" || !secret.game) throw new ApiError("La partie n'est pas en cours", 400);
   // idempotent : si quelqu'un d'autre a déjà lancé la main suivante, on renvoie l'état actuel
-  if (!secret.game.results) return { state: publicState(room.code, secret) };
+  if (!secret.game.results) return { state: publicState(room.code, secret, room.version) };
   const alive = secret.game.players.filter((p) => p.chips > 0).length;
   if (alive < 2) {
     secret.phase = "over";
@@ -263,8 +260,16 @@ async function handleNextHand(body: Record<string, unknown>) {
 }
 
 async function handleState(body: Record<string, unknown>) {
-  const { room, secret } = await loadRoom(body.code);
-  return { state: publicState(room.code, secret) };
+  // chemin chaud (sondé toutes les 2 s par chaque joueur) : on lit directement
+  // l'état public déjà matérialisé, sans toucher aux secrets
+  if (typeof body.code !== "string" || !body.code.trim()) throw new ApiError("Code de salle manquant");
+  const { data } = await supabase
+    .from("rooms")
+    .select("state")
+    .eq("code", body.code.trim().toUpperCase())
+    .maybeSingle();
+  if (!data) throw new ApiError("Salle introuvable — vérifie le code", 404);
+  return { state: data.state };
 }
 
 Deno.serve(async (req: Request) => {

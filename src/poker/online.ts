@@ -14,10 +14,19 @@ const ANON_KEY =
 
 export interface RoomState {
   code: string;
+  version?: number; // croissante à chaque écriture — permet d'ignorer un sondage périmé
   phase: "lobby" | "playing" | "over";
   config: { chips: number; sb: number; bb: number };
   members: { id: number; name: string }[];
   game: GameState | null;
+}
+
+export class ApiCallError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
 }
 
 export interface OnlineSession {
@@ -61,7 +70,7 @@ async function post(body: Record<string, unknown>): Promise<Record<string, unkno
   });
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
   if (!data || data.ok !== true) {
-    throw new Error((data?.error as string) ?? `Erreur réseau (${res.status})`);
+    throw new ApiCallError((data?.error as string) ?? `Erreur réseau (${res.status})`, res.status);
   }
   return data;
 }
