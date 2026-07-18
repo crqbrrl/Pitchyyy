@@ -325,9 +325,10 @@ function showdown(s: GameState): GameState {
       if (!bestScore || compareScore(score, bestScore) > 0) bestScore = score;
     }
     const winners = slice.eligible.filter((q) => compareScore(evals.get(q.id)!.score, bestScore!) === 0);
-    // jetons impairs au plus proche du donneur, dans le sens du jeu
+    // jetons impairs au premier joueur à gauche du donneur (le donneur en dernier)
+    const n = s.players.length;
     const ordered = [...winners].sort(
-      (a, b) => ((a.id - s.dealer + s.players.length) % s.players.length) - ((b.id - s.dealer + s.players.length) % s.players.length),
+      (a, b) => ((a.id - s.dealer - 1 + n) % n) - ((b.id - s.dealer - 1 + n) % n),
     );
     const share = Math.floor(slice.amount / winners.length);
     let remainder = slice.amount - share * winners.length;
@@ -367,10 +368,15 @@ export function legalActions(s: GameState): LegalActions | null {
   const p = s.players[s.toAct];
   const callAmount = Math.min(s.currentBet - p.bet, p.chips);
   const maxRaiseTo = p.bet + p.chips;
+  // un joueur qui a déjà parlé et ne fait face qu'à une relance incomplète
+  // (tapis inférieur à la relance minimum) ne peut que suivre ou se coucher :
+  // les enchères ne sont pas rouvertes (p.acted n'est remis à zéro que par
+  // une relance complète)
+  const facingIncompleteRaise = p.acted && p.bet < s.currentBet;
   return {
     canCheck: p.bet === s.currentBet,
     callAmount,
-    canRaise: maxRaiseTo > s.currentBet,
+    canRaise: maxRaiseTo > s.currentBet && !facingIncompleteRaise,
     minRaiseTo: Math.min(s.currentBet + s.minRaise, maxRaiseTo),
     maxRaiseTo,
     isOpeningBet: s.currentBet === 0,

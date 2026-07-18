@@ -6,6 +6,7 @@ import { Card as CardType } from "./types.ts";
 import { Action } from "./engine.ts";
 import { evaluateBest } from "./handEval.ts";
 import {
+  ApiCallError,
   OnlineSession,
   RoomState,
   clearSession,
@@ -38,6 +39,18 @@ export default function OnlineApp({ onExit }: { onExit: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Applique un nouvel état en ignorant les réponses périmées (une requête de
+  // sondage partie avant une action peut arriver après elle) et en conservant
+  // l'identité de l'objet si rien n'a changé (pas de re-render inutile)
+  const mergeState = useCallback((s: RoomState) => {
+    setState((prev) => {
+      if (prev && prev.version !== undefined && s.version !== undefined && s.version < prev.version) {
+        return prev;
+      }
+      return prev && JSON.stringify(prev) === JSON.stringify(s) ? prev : s;
+    });
+  }, []);
+
   // Sondage régulier de l'état de la salle (2 s) + rafraîchissement au retour d'onglet
   useEffect(() => {
     if (!session || screen !== "room") return;
@@ -45,9 +58,7 @@ export default function OnlineApp({ onExit }: { onExit: () => void }) {
     const tick = async () => {
       try {
         const s = await fetchState(session.code);
-        // garde l'identité de l'objet si rien n'a changé : évite un re-render
-        // complet de la table toutes les 2 s
-        if (!stopped) setState((prev) => (prev && JSON.stringify(prev) === JSON.stringify(s) ? prev : s));
+        if (!stopped) mergeState(s);
       } catch (e) {
         if (!stopped && e instanceof Error && e.message.includes("introuvable")) {
           clearSession();
@@ -68,19 +79,32 @@ export default function OnlineApp({ onExit }: { onExit: () => void }) {
       clearInterval(iv);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [session, screen]);
+  }, [session, screen, mergeState]);
 
-  const runOp = useCallback(async (op: () => Promise<RoomState>) => {
-    setBusy(true);
-    setError(null);
-    try {
-      setState(await op());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Erreur inconnue");
-    } finally {
-      setBusy(false);
-    }
-  }, []);
+  const runOp = useCallback(
+    async (op: () => Promise<RoomState>) => {
+      setBusy(true);
+      setError(null);
+      try {
+        try {
+          mergeState(await op());
+        } catch (e) {
+          // conflit d'écriture (deux actions simultanées) : on réessaie une fois
+          if (e instanceof ApiCallError && e.status === 409) {
+            await new Promise((r) => setTimeout(r, 400));
+            mergeState(await op());
+          } else {
+            throw e;
+          }
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Erreur inconnue");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [mergeState],
+  );
 
   const leave = () => {
     clearSession();
@@ -320,16 +344,25 @@ function RoomScreen({
   const me = game?.players[session.playerId] ?? null;
 
   // Récupère mes cartes à chaque nouvelle main (dépendance primitive :
-  // l'effet ne tourne qu'une fois par main, pas à chaque sondage)
+  // l'effet ne tourne qu'une fois par main, pas à chaque sondage), avec
+  // réessai en cas d'échec réseau ou de réponse encore sur l'ancienne main
   const handNumber = game?.handNumber ?? 0;
   useEffect(() => {
     if (handNumber === 0) return;
     let cancelled = false;
-    fetchMyCards(session)
-      .then((r) => {
-        if (!cancelled) setMyCards(r);
-      })
-      .catch(() => {});
+    const attempt = (delay: number) => {
+      const later = () => {
+        if (!cancelled) setTimeout(() => attempt(Math.min(delay * 2, 8000)), delay);
+      };
+      fetchMyCards(session)
+        .then((r) => {
+          if (cancelled) return;
+          if (r.handNumber >= handNumber) setMyCards(r);
+          else later();
+        })
+        .catch(later);
+    };
+    attempt(800);
     return () => {
       cancelled = true;
     };
